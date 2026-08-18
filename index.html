@@ -391,8 +391,11 @@
   @media (max-width: 620px) {
     .wrap { padding: 28px 16px 56px; gap: 22px; }
     h1 { font-size: 26px; }
-    /* 窄屏时两个输入框上下排，⇄ 居中夹在中间 */
+    /* 窄屏时两个输入框上下排，⇄ 居中夹在中间。
+       注意：竖排后 flex-basis 作用在高度上，必须把 .field 的 flex 复位，
+       否则输入框会被撑成 150px 高。 */
     .converter { flex-direction: column; align-items: stretch; gap: 8px; }
+    .converter .field { flex: none; }
     .converter .swap { text-align: center; }
   }
 </style>
