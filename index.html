@@ -204,11 +204,24 @@
     font-variant-numeric: tabular-nums;
     line-height: 1;
   }
+  /* 涨跌幅：色块里只放数字，说明文字用普通字色放在色块外，
+     避免色块背景压到下面一行，也避免标签被染成涨跌色 */
+  .delta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .delta .note {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--muted);
+  }
   .chip {
     font-family: var(--mono);
     font-size: 12px;
     font-weight: 600;
-    padding: 2px 7px;
+    padding: 3px 8px;
     border-radius: 3px;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -217,13 +230,18 @@
   .chip.down { color: var(--down); background: color-mix(in srgb, var(--down) 12%, transparent); }
   .chip.flat { color: var(--muted); background: color-mix(in srgb, var(--muted) 12%, transparent); }
 
+  /* 副行 + 区间高低合成一组，组内行距紧、与上面的价格拉开距离 */
+  .meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
   .aside {
     font-family: var(--mono);
     font-size: 12px;
     color: var(--muted);
     font-variant-numeric: tabular-nums;
     min-height: 1.5em;
-    margin-top: -6px;
   }
 
   /* ---------- 图表 ---------- */
@@ -284,6 +302,7 @@
     padding-bottom: 2px;
   }
   .hilo b { font-weight: 500; color: var(--ink-soft); }
+  .hilo .src { margin-left: auto; opacity: 0.75; }
 
   /* ---------- 换汇小工具 ---------- */
 
@@ -441,7 +460,7 @@
   </div>
 
   <footer>
-    <span>汇率来自 <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter</a>（欧洲央行参考汇率，工作日每日更新一次，非实时盘中价）；币价来自 <a href="https://www.coingecko.com" target="_blank" rel="noopener">CoinGecko</a>。</span>
+    <span>汇率来自 <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter</a>（欧洲央行参考汇率，工作日每日更新一次，非实时盘中价）；币价来自 <a href="https://www.coingecko.com" target="_blank" rel="noopener">CoinGecko</a>，其被限流时自动改用 <a href="https://www.coinbase.com" target="_blank" rel="noopener">Coinbase</a>。</span>
     <span class="mono">每 60 秒自动刷新 · 数据仅供参考，不构成任何投资建议</span>
   </footer>
 
@@ -536,53 +555,161 @@
 
   // ---------------------------------------------------------------
   // 取数
+  //
   // 每个 fetch 返回统一结构：{ series: [[毫秒时间戳, 数值], …], last, change }
+  //
+  // CoinGecko 免费接口的额度很紧（大约每分钟十几次，按 IP 算），
+  // 之前每 60 秒刷新要发 3 个请求，很容易被限流返回 429。两处改动：
+  //   1. 走势数据缓存 10 分钟——区间图不需要每分钟重拉，只有现价需要
+  //   2. CoinGecko 失败时自动改用 Coinbase 的公开行情接口
+  // 稳定状态下每分钟只剩 1 个币价请求。
   // ---------------------------------------------------------------
 
-  function fetchFX(days) {
-    var end = new Date();
-    var start = new Date(end.getTime() - days * 864e5);
-    var url = "https://api.frankfurter.dev/v1/" + iso(start) + ".." + iso(end) +
-              "?base=USD&symbols=CNY";
+  var CB = "https://api.exchange.coinbase.com";
+  var PRODUCT = { bitcoin: "BTC-USD", ethereum: "ETH-USD" };
 
-    return getJSON(url).then(function (data) {
-      var series = Object.keys(data.rates).sort().map(function (day) {
-        // 按 UTC 正午解析，避开时区把日期推前一天的问题
-        return [Date.parse(day + "T12:00:00Z"), data.rates[day].CNY];
-      });
-      if (!series.length) throw new Error("空数据");
+  var CHART_TTL = 10 * 60 * 1000;    // 币价走势缓存 10 分钟
+  var FX_TTL    = 30 * 60 * 1000;    // 汇率是每天更新的，缓存久一点无妨
+  var memo = {};                     // key -> { at, value }
 
-      var last = series[series.length - 1][1];
-      var prev = series.length > 1 ? series[series.length - 2][1] : last;
-      return { series: series, last: last, change: (last - prev) / prev * 100 };
+  // 带内存缓存的取数：同一个 key 在 TTL 内直接复用上次结果
+  function cached(key, ttl, make) {
+    var hit = memo[key];
+    if (hit && Date.now() - hit.at < ttl) return Promise.resolve(hit.value);
+    return make().then(function (value) {
+      memo[key] = { at: Date.now(), value: value };
+      return value;
     });
   }
 
-  // 两个币的现价 + 24 小时涨跌一次拿全，少发一个请求（CoinGecko 免费额度很紧）
-  function fetchSpot() {
+  function friendly(err) {
+    var m = String(err && err.message || err);
+    if (m.indexOf("429") >= 0) return "接口限流，稍后自动重试";
+    if (m.indexOf("Failed to fetch") >= 0) return "网络不通";
+    return m;
+  }
+
+  // ---- 汇率 ----
+
+  function fetchFX(days) {
+    return cached("fx@" + days, FX_TTL, function () {
+      var end = new Date();
+      var start = new Date(end.getTime() - days * 864e5);
+      var url = "https://api.frankfurter.dev/v1/" + iso(start) + ".." + iso(end) +
+                "?base=USD&symbols=CNY";
+
+      return getJSON(url).then(function (data) {
+        var series = Object.keys(data.rates).sort().map(function (day) {
+          // 按 UTC 正午解析，避开时区把日期推前一天的问题
+          return [Date.parse(day + "T12:00:00Z"), data.rates[day].CNY];
+        });
+        if (!series.length) throw new Error("空数据");
+
+        var last = series[series.length - 1][1];
+        var prev = series.length > 1 ? series[series.length - 2][1] : last;
+        return { series: series, last: last, change: (last - prev) / prev * 100 };
+      });
+    });
+  }
+
+  // ---- 币价现价：先 CoinGecko，失败改 Coinbase ----
+
+  function coingeckoSpot() {
     return getJSON("https://api.coingecko.com/api/v3/simple/price" +
                    "?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true")
-      .catch(function () { return {}; });   // 现价拿不到不算致命，走势图还能画
+      .then(function (d) {
+        if (!d.bitcoin || !d.ethereum) throw new Error("空数据");
+        return { data: d, source: "CoinGecko" };
+      });
+  }
+
+  function coinbaseSpot() {
+    var ids = Object.keys(PRODUCT);
+    return Promise.all(ids.map(function (id) {
+      return getJSON(CB + "/products/" + PRODUCT[id] + "/stats");
+    })).then(function (rows) {
+      var out = {};
+      rows.forEach(function (s, i) {
+        var last = parseFloat(s.last), open = parseFloat(s.open);
+        out[ids[i]] = {
+          usd: last,
+          // Coinbase 的 stats 里 open 就是 24 小时前的价格
+          usd_24h_change: isFinite(open) && open ? (last - open) / open * 100 : null
+        };
+      });
+      return { data: out, source: "Coinbase" };
+    });
+  }
+
+  function fetchSpot() {
+    return coingeckoSpot()
+      .catch(function () { return coinbaseSpot(); })
+      .catch(function () { return { data: {}, source: null }; });  // 现价拿不到不致命
+  }
+
+  // ---- 币价走势：同样两级来源 ----
+
+  function coingeckoChart(coinId, days) {
+    return getJSON("https://api.coingecko.com/api/v3/coins/" + coinId +
+                   "/market_chart?vs_currency=usd&days=" + days)
+      .then(function (d) {
+        if (!d.prices || !d.prices.length) throw new Error("空数据");
+        return { series: d.prices, source: "CoinGecko" };
+      });
+  }
+
+  function coinbaseChart(coinId, days) {
+    // Coinbase 单次最多返回 300 根 K 线，按区间选粒度刚好落在限制内
+    var gran = days <= 7 ? 3600 : (days <= 30 ? 21600 : 86400);
+    var end = new Date();
+    var start = new Date(end.getTime() - days * 864e5);
+    var url = CB + "/products/" + PRODUCT[coinId] + "/candles?granularity=" + gran +
+              "&start=" + start.toISOString() + "&end=" + end.toISOString();
+
+    return getJSON(url).then(function (rows) {
+      if (!Array.isArray(rows) || !rows.length) throw new Error("空数据");
+      // 每根 K 线是 [秒级时间, 低, 高, 开, 收, 量]，返回的是倒序，取收盘价
+      return {
+        series: rows.map(function (r) { return [r[0] * 1000, r[4]]; })
+                    .sort(function (a, b) { return a[0] - b[0]; }),
+        source: "Coinbase"
+      };
+    });
+  }
+
+  function fetchChart(coinId, days) {
+    return cached(coinId + "@" + days, CHART_TTL, function () {
+      return coingeckoChart(coinId, days).catch(function (e) {
+        return coinbaseChart(coinId, days).catch(function () {
+          throw e;   // 两个源都挂了，报第一个错，信息更贴近真实原因
+        });
+      });
+    });
   }
 
   function fetchCoin(coinId, days, spotPromise) {
-    var chartUrl = "https://api.coingecko.com/api/v3/coins/" + coinId +
-                   "/market_chart?vs_currency=usd&days=" + days;
+    return Promise.all([fetchChart(coinId, days), spotPromise]).then(function (res) {
+      var chart = res[0];
+      var series = chart.series;
+      var spot = (res[1].data || {})[coinId] || {};
+      var endPrice = series[series.length - 1][1];
+      var firstPrice = series.length > 1 ? series[0][1] : null;
 
-    return Promise.all([getJSON(chartUrl), spotPromise]).then(function (res) {
-      var series = res[0].prices;
-      if (!series || !series.length) throw new Error("空数据");
-
-      var spot = res[1][coinId] || {};
-      var fallbackPrev = series.length > 1 ? series[0][1] : null;
+      // 两个来源不同时才标注，界面上不啰嗦
+      var src = res[1].source && res[1].source !== chart.source
+        ? chart.source + " + " + res[1].source
+        : chart.source;
 
       return {
         series: series,
         // 现价优先用 spot 接口（比走势数据的最后一点更新），取不到就回退
-        last: spot.usd != null ? spot.usd : series[series.length - 1][1],
+        last: spot.usd != null ? spot.usd : endPrice,
         change: spot.usd_24h_change != null
           ? spot.usd_24h_change
-          : (fallbackPrev ? (series[series.length - 1][1] - fallbackPrev) / fallbackPrev * 100 : null)
+          : (firstPrice ? (endPrice - firstPrice) / firstPrice * 100 : null),
+        // 现价拿不到时涨跌是按整个区间算的，标签得跟着改，不能还写「24 小时」
+        rangeChange: spot.usd_24h_change == null,
+        source: src === "CoinGecko" ? null : src   // 主源正常时不显示标注
       };
     });
   }
@@ -685,7 +812,7 @@
     var body = el.querySelector(".body");
 
     if (data instanceof Error) {
-      body.innerHTML = '<div class="state error">取数失败：' + data.message + '</div>';
+      body.innerHTML = '<div class="state error">取数失败：' + friendly(data) + '</div>';
       return;
     }
 
@@ -702,13 +829,18 @@
     body.innerHTML =
       '<div class="price">' +
         '<span class="value">' + cfg.unit + fmt(data.last, cfg.digits) + '</span>' +
-        '<span class="chip ' + dir + '">' + arrow + " " + pct(data.change) +
-          ' <span style="opacity:.7">' + cfg.changeLabel + '</span></span>' +
+        '<span class="delta">' +
+          '<span class="chip ' + dir + '">' + arrow + " " + pct(data.change) + '</span>' +
+          '<span class="note">' + (data.rangeChange ? days + " 天" : cfg.changeLabel) + '</span>' +
+        '</span>' +
       '</div>' +
-      '<div class="aside">' + (extra || "") + '</div>' +
-      '<div class="hilo">' +
-        '<span>' + days + ' 天最高 <b>' + cfg.unit + fmt(hi, cfg.digits) + '</b></span>' +
-        '<span>最低 <b>' + cfg.unit + fmt(lo, cfg.digits) + '</b></span>' +
+      '<div class="meta">' +
+        '<div class="aside">' + (extra || "") + '</div>' +
+        '<div class="hilo">' +
+          '<span>' + days + ' 天最高 <b>' + cfg.unit + fmt(hi, cfg.digits) + '</b></span>' +
+          '<span>最低 <b>' + cfg.unit + fmt(lo, cfg.digits) + '</b></span>' +
+          (data.source ? '<span class="src">' + data.source + '</span>' : "") +
+        '</div>' +
       '</div>' +
       '<div class="plot"></div>' +
       '<details class="table"><summary>查看数据表（' + data.series.length + ' 个数据点）</summary>' +
@@ -871,7 +1003,11 @@
 
   // ---- 事件绑定 ----
 
-  document.getElementById("refresh").addEventListener("click", load);
+  // 手动点刷新时清掉缓存，强制全部重拉（自动刷新则继续吃缓存，省额度）
+  document.getElementById("refresh").addEventListener("click", function () {
+    memo = {};
+    load();
+  });
 
   document.getElementById("ranges").addEventListener("click", function (ev) {
     var btn = ev.target.closest("button[data-days]");
