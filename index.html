@@ -450,12 +450,12 @@
     <span class="label">按当前汇率换算</span>
     <label class="field">
       <span>USD $</span>
-      <input id="usd" type="number" inputmode="decimal" step="any" placeholder="100" value="100">
+      <input id="usd" type="text" inputmode="decimal" autocomplete="off" maxlength="15" placeholder="100" value="100">
     </label>
     <span class="swap">⇄</span>
     <label class="field">
       <span>CNY ¥</span>
-      <input id="cny" type="number" inputmode="decimal" step="any" placeholder="—">
+      <input id="cny" type="text" inputmode="decimal" autocomplete="off" maxlength="15" placeholder="—">
     </label>
   </div>
 
@@ -981,6 +981,33 @@
   var usdInput = document.getElementById("usd");
   var cnyInput = document.getElementById("cny");
 
+  var MAX_INT = 12;                  // 整数位上限，够放万亿
+  var MAX_DEC = 2;                   // 小数位上限，到分
+
+  // 只留数字和一个小数点：type=number 允许 e/E/+/- 和任意长度，输入法下也管不住，
+  // 所以改成 type=text 自己过滤。
+  function clean(raw) {
+    var s = raw.replace(/[^\d.]/g, "");
+    var dot = s.indexOf(".");
+    if (dot !== -1) s = s.slice(0, dot + 1) + s.slice(dot + 1).replace(/\./g, "");
+    s = s.replace(/^0+(?=\d)/, "");                    // 007 → 7，但保留 0.5 的 0
+    var parts = s.split(".");
+    s = parts[0].slice(0, MAX_INT);
+    if (parts.length > 1) s += "." + parts[1].slice(0, MAX_DEC);
+    return s;
+  }
+
+  // 过滤会改变字符串长度，光标得跟着挪，否则连着打字光标会跳到末尾
+  function sanitize(el) {
+    var before = el.value;
+    var after = clean(before);
+    if (after === before) return;
+    var caret = el.selectionStart;
+    var kept = clean(before.slice(0, caret)).length;
+    el.value = after;
+    try { el.setSelectionRange(kept, kept); } catch (e) {}
+  }
+
   function setRate(r) {
     rate = r;
     if (rate) sync(lastEdited);
@@ -994,12 +1021,12 @@
     var n = parseFloat(src.value);
     if (!isFinite(n)) { dst.value = ""; return; }
     var out = from === "usd" ? n * rate : n / rate;
-    // 去掉多余的尾零：1234.50 → 1234.5
-    dst.value = String(Math.round(out * 100) / 100);
+    // 去掉多余的尾零：1234.50 → 1234.5；再走一遍 clean 防止换算结果溢出位数
+    dst.value = clean(String(Math.round(out * 100) / 100));
   }
 
-  usdInput.addEventListener("input", function () { sync("usd"); });
-  cnyInput.addEventListener("input", function () { sync("cny"); });
+  usdInput.addEventListener("input", function () { sanitize(usdInput); sync("usd"); });
+  cnyInput.addEventListener("input", function () { sanitize(cnyInput); sync("cny"); });
 
   // ---- 事件绑定 ----
 
