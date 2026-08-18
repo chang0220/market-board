@@ -1,0 +1,900 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>行情看板 · 汇率与加密货币</title>
+<meta name="description" content="美元人民币汇率、比特币与以太坊实时走势">
+<!-- 加到 iPhone 主屏后按 App 方式全屏打开 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="行情">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#F4F6F8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0D1014" media="(prefers-color-scheme: dark)">
+<style>
+  :root {
+    --page:      #F4F6F8;
+    --surface:   #FFFFFF;
+    --ink:       #10141A;
+    --ink-soft:  #434C59;
+    --muted:     #6D7787;
+    --line:      #E2E6EC;
+    --line-soft: #EDF0F4;
+
+    /* 三条数据线的颜色，明暗两套都跑过配色校验 */
+    --fx:  #2563A8;
+    --btc: #A85708;
+    --eth: #5B4BC4;
+
+    --up:   #0E7268;
+    --down: #B3123F;
+
+    --fill: 9%;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --page:      #0D1014;
+      --surface:   #151A21;
+      --ink:       #E8ECF2;
+      --ink-soft:  #B4BDCA;
+      --muted:     #808B9C;
+      --line:      #252C36;
+      --line-soft: #1D232B;
+      --fx:  #5B94D6;
+      --btc: #C9821F;
+      --eth: #7E85E8;
+      --up:   #34D3BE;
+      --down: #FF7A94;
+      --fill: 13%;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 40px 24px 72px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  /* ---------- 页头 ---------- */
+
+  .masthead {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+    padding-bottom: 20px;
+    border-bottom: 2px solid var(--ink);
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 6px;
+  }
+  h1 {
+    margin: 0;
+    font-size: clamp(28px, 5vw, 40px);
+    font-weight: 660;
+    letter-spacing: -0.025em;
+    line-height: 1.05;
+  }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--up);
+    flex: none;
+  }
+  .dot.stale { background: var(--muted); }
+  .dot.err   { background: var(--down); }
+  button.refresh {
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 5px 12px;
+    cursor: pointer;
+  }
+  button.refresh:hover { border-color: var(--muted); }
+  button.refresh:disabled { opacity: 0.45; cursor: default; }
+
+  /* ---------- 区间切换 ---------- */
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .toolbar .label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .ranges { display: flex; gap: 4px; }
+  .ranges button {
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-soft);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 4px 12px;
+    cursor: pointer;
+  }
+  .ranges button[aria-pressed="true"] {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--page);
+  }
+
+  /* ---------- 卡片 ---------- */
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 16px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--c);
+    border-radius: 4px;
+    padding: 18px 18px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+  }
+  .card header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .card .code {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 640;
+    letter-spacing: 0.05em;
+    color: var(--c);
+  }
+  .card .subtitle { font-size: 12px; color: var(--muted); }
+
+  /* 数值、涨跌、折算各占一行，三张卡片的图表才能横向对齐 */
+  .price {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .price .value {
+    font-family: var(--mono);
+    font-size: clamp(26px, 4.5vw, 34px);
+    font-weight: 620;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .chip {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .chip.up   { color: var(--up);   background: color-mix(in srgb, var(--up) 12%, transparent); }
+  .chip.down { color: var(--down); background: color-mix(in srgb, var(--down) 12%, transparent); }
+  .chip.flat { color: var(--muted); background: color-mix(in srgb, var(--muted) 12%, transparent); }
+
+  .aside {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    min-height: 1.5em;
+    margin-top: -6px;
+  }
+
+  /* ---------- 图表 ---------- */
+
+  .plot { position: relative; }
+  .plot svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+  .plot .axis {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--muted);
+    padding-top: 5px;
+    border-top: 1px solid var(--line-soft);
+    margin-top: 2px;
+  }
+
+  .tip {
+    position: absolute;
+    top: 0;
+    transform: translate(-50%, -4px);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 5px 9px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 90ms;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.10);
+    z-index: 2;
+  }
+  .tip.on { opacity: 1; }
+  .tip .d { color: var(--muted); margin-right: 7px; }
+
+  .state {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    padding: 30px 0;
+    text-align: center;
+  }
+  .state.error { color: var(--down); }
+
+  /* ---------- 区间高低 ---------- */
+
+  .hilo {
+    display: flex;
+    gap: 16px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    padding-bottom: 2px;
+  }
+  .hilo b { font-weight: 500; color: var(--ink-soft); }
+
+  /* ---------- 换汇小工具 ---------- */
+
+  .converter {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--fx);
+    border-radius: 4px;
+    padding: 16px 18px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+  }
+  .converter .label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    width: 100%;
+  }
+  .converter .field {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 7px 11px;
+    background: var(--page);
+    flex: 1 1 150px;
+    min-width: 0;
+  }
+  .converter .field span {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    flex: none;
+  }
+  .converter input {
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 17px;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+    background: transparent;
+    border: 0;
+    outline: none;
+    width: 100%;
+    min-width: 0;
+    /* 手机上唤出数字键盘 */
+    appearance: textfield;
+  }
+  .converter input::-webkit-outer-spin-button,
+  .converter input::-webkit-inner-spin-button { appearance: none; margin: 0; }
+  .converter .swap {
+    font-family: var(--mono);
+    font-size: 15px;
+    color: var(--muted);
+    flex: none;
+  }
+
+  /* ---------- 数据表（无障碍：不靠颜色也能读到数） ---------- */
+
+  details.table { border-top: 1px solid var(--line-soft); padding-top: 8px; }
+  details.table summary {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    cursor: pointer;
+    list-style: none;
+  }
+  details.table summary::-webkit-details-marker { display: none; }
+  details.table summary::before { content: "▸ "; }
+  details.table[open] summary::before { content: "▾ "; }
+  details.table .scroll { max-height: 200px; overflow: auto; margin-top: 8px; }
+  details.table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  details.table th, details.table td {
+    text-align: left;
+    padding: 3px 8px 3px 0;
+    border-bottom: 1px solid var(--line-soft);
+    color: var(--ink-soft);
+  }
+  details.table th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--surface); }
+  details.table td:last-child { text-align: right; }
+
+  footer {
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  footer .mono { font-family: var(--mono); }
+  footer a { color: var(--ink-soft); }
+
+  @media (max-width: 620px) {
+    .wrap { padding: 28px 16px 56px; gap: 22px; }
+    h1 { font-size: 26px; }
+    /* 窄屏时两个输入框上下排，⇄ 居中夹在中间 */
+    .converter { flex-direction: column; align-items: stretch; gap: 8px; }
+    .converter .swap { text-align: center; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">Live market board</p>
+      <h1>行情看板</h1>
+    </div>
+    <div class="status">
+      <span class="dot" id="dot"></span>
+      <span id="updated">加载中…</span>
+      <button class="refresh" id="refresh">刷新</button>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <span class="label">区间</span>
+    <div class="ranges" id="ranges">
+      <button data-days="7"  aria-pressed="false">7 天</button>
+      <button data-days="30" aria-pressed="true">30 天</button>
+      <button data-days="90" aria-pressed="false">90 天</button>
+    </div>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="converter">
+    <span class="label">按当前汇率换算</span>
+    <label class="field">
+      <span>USD $</span>
+      <input id="usd" type="number" inputmode="decimal" step="any" placeholder="100" value="100">
+    </label>
+    <span class="swap">⇄</span>
+    <label class="field">
+      <span>CNY ¥</span>
+      <input id="cny" type="number" inputmode="decimal" step="any" placeholder="—">
+    </label>
+  </div>
+
+  <footer>
+    <span>汇率来自 <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter</a>（欧洲央行参考汇率，工作日每日更新一次，非实时盘中价）；币价来自 <a href="https://www.coingecko.com" target="_blank" rel="noopener">CoinGecko</a>。</span>
+    <span class="mono">每 60 秒自动刷新 · 数据仅供参考，不构成任何投资建议</span>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------
+  // 配置：三张卡片，各自怎么取数、怎么格式化
+  // ---------------------------------------------------------------
+
+  var CARDS = [
+    {
+      id: "fx",
+      code: "USD / CNY",
+      title: "美元 兑 人民币",
+      color: "var(--fx)",
+      unit: "¥",
+      digits: 4,
+      changeLabel: "较上一交易日"
+    },
+    {
+      id: "btc",
+      code: "BTC / USD",
+      title: "比特币",
+      color: "var(--btc)",
+      unit: "$",
+      digits: 0,
+      changeLabel: "24 小时"
+    },
+    {
+      id: "eth",
+      code: "ETH / USD",
+      title: "以太坊",
+      color: "var(--eth)",
+      unit: "$",
+      digits: 2,
+      changeLabel: "24 小时"
+    }
+  ];
+
+  var days = 30;            // 当前区间
+  var timer = null;         // 自动刷新计时器
+  var reqId = 0;            // 请求序号，防止旧请求覆盖新数据
+
+  // ---------------------------------------------------------------
+  // 工具函数
+  // ---------------------------------------------------------------
+
+  function fmt(n, digits) {
+    if (n == null || !isFinite(n)) return "—";
+    return n.toLocaleString("en-US", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits
+    });
+  }
+
+  function pct(n) {
+    if (n == null || !isFinite(n)) return "—";
+    return (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
+  }
+
+  function shortDate(ms) {
+    var d = new Date(ms);
+    return (d.getMonth() + 1) + "/" + d.getDate();
+  }
+
+  function fullDate(ms) {
+    var d = new Date(ms);
+    var s = (d.getMonth() + 1) + "月" + d.getDate() + "日";
+    // 7 天区间是小时级数据，带上时间才有意义
+    if (days === 7) {
+      s += " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    }
+    return s;
+  }
+
+  function getJSON(url) {
+    return fetch(url, { cache: "no-store" }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    });
+  }
+
+  function iso(d) {
+    return d.getFullYear() + "-" +
+      String(d.getMonth() + 1).padStart(2, "0") + "-" +
+      String(d.getDate()).padStart(2, "0");
+  }
+
+  // ---------------------------------------------------------------
+  // 取数
+  // 每个 fetch 返回统一结构：{ series: [[毫秒时间戳, 数值], …], last, change }
+  // ---------------------------------------------------------------
+
+  function fetchFX(days) {
+    var end = new Date();
+    var start = new Date(end.getTime() - days * 864e5);
+    var url = "https://api.frankfurter.dev/v1/" + iso(start) + ".." + iso(end) +
+              "?base=USD&symbols=CNY";
+
+    return getJSON(url).then(function (data) {
+      var series = Object.keys(data.rates).sort().map(function (day) {
+        // 按 UTC 正午解析，避开时区把日期推前一天的问题
+        return [Date.parse(day + "T12:00:00Z"), data.rates[day].CNY];
+      });
+      if (!series.length) throw new Error("空数据");
+
+      var last = series[series.length - 1][1];
+      var prev = series.length > 1 ? series[series.length - 2][1] : last;
+      return { series: series, last: last, change: (last - prev) / prev * 100 };
+    });
+  }
+
+  // 两个币的现价 + 24 小时涨跌一次拿全，少发一个请求（CoinGecko 免费额度很紧）
+  function fetchSpot() {
+    return getJSON("https://api.coingecko.com/api/v3/simple/price" +
+                   "?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true")
+      .catch(function () { return {}; });   // 现价拿不到不算致命，走势图还能画
+  }
+
+  function fetchCoin(coinId, days, spotPromise) {
+    var chartUrl = "https://api.coingecko.com/api/v3/coins/" + coinId +
+                   "/market_chart?vs_currency=usd&days=" + days;
+
+    return Promise.all([getJSON(chartUrl), spotPromise]).then(function (res) {
+      var series = res[0].prices;
+      if (!series || !series.length) throw new Error("空数据");
+
+      var spot = res[1][coinId] || {};
+      var fallbackPrev = series.length > 1 ? series[0][1] : null;
+
+      return {
+        series: series,
+        // 现价优先用 spot 接口（比走势数据的最后一点更新），取不到就回退
+        last: spot.usd != null ? spot.usd : series[series.length - 1][1],
+        change: spot.usd_24h_change != null
+          ? spot.usd_24h_change
+          : (fallbackPrev ? (series[series.length - 1][1] - fallbackPrev) / fallbackPrev * 100 : null)
+      };
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // 画图：一条 2px 折线 + 一层淡填充 + 悬停十字线
+  // ---------------------------------------------------------------
+
+  var W = 600, H = 150, PAD_T = 10, PAD_B = 6;
+
+  function drawChart(host, series, opt) {
+    var xs = series.map(function (p) { return p[0]; });
+    var ys = series.map(function (p) { return p[1]; });
+    var xMin = xs[0], xMax = xs[xs.length - 1];
+    var yMin = Math.min.apply(null, ys), yMax = Math.max.apply(null, ys);
+
+    // 上下各留一点余量，避免线贴着卡片边缘
+    var padY = (yMax - yMin) * 0.12 || (yMax * 0.01) || 1;
+    yMin -= padY; yMax += padY;
+
+    function X(t) { return xMax === xMin ? W / 2 : (t - xMin) / (xMax - xMin) * W; }
+    function Y(v) { return PAD_T + (1 - (v - yMin) / (yMax - yMin)) * (H - PAD_T - PAD_B); }
+
+    var pts = series.map(function (p) { return X(p[0]).toFixed(2) + "," + Y(p[1]).toFixed(2); });
+    var line = "M" + pts.join("L");
+    var area = line + "L" + W + "," + H + "L0," + H + "Z";
+
+    host.innerHTML =
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="' + opt.aria + '">' +
+        '<path d="' + area + '" fill="' + opt.color + '" fill-opacity="0.10"/>' +
+        '<path d="' + line + '" fill="none" stroke="' + opt.color + '" stroke-width="2" ' +
+              'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>' +
+        '<g class="cursor" opacity="0">' +
+          '<line y1="0" y2="' + H + '" stroke="var(--muted)" stroke-width="1" ' +
+                'stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>' +
+          '<circle r="4.5" fill="var(--surface)" stroke="' + opt.color + '" ' +
+                  'stroke-width="2" vector-effect="non-scaling-stroke"/>' +
+        '</g>' +
+        '<rect class="hit" x="0" y="0" width="' + W + '" height="' + H + '" fill="transparent"/>' +
+      '</svg>' +
+      '<div class="tip"></div>' +
+      '<div class="axis"><span>' + shortDate(xMin) + '</span><span>' + shortDate(xMax) + '</span></div>';
+
+    // ---- 悬停 ----
+    var svg = host.querySelector("svg");
+    var cursor = host.querySelector(".cursor");
+    var cLine = cursor.querySelector("line");
+    var cDot = cursor.querySelector("circle");
+    var tip = host.querySelector(".tip");
+
+    function move(ev) {
+      var box = svg.getBoundingClientRect();
+      var clientX = ev.touches ? ev.touches[0].clientX : ev.clientX;
+      var ratio = (clientX - box.left) / box.width;
+      ratio = Math.max(0, Math.min(1, ratio));
+
+      // 找横坐标最近的一个点
+      var target = xMin + ratio * (xMax - xMin);
+      var i = 0, best = Infinity;
+      for (var k = 0; k < xs.length; k++) {
+        var d = Math.abs(xs[k] - target);
+        if (d < best) { best = d; i = k; }
+      }
+
+      var px = X(xs[i]), py = Y(ys[i]);
+      cLine.setAttribute("x1", px);
+      cLine.setAttribute("x2", px);
+      cDot.setAttribute("cx", px);
+      cDot.setAttribute("cy", py);
+      cursor.setAttribute("opacity", "1");
+
+      tip.innerHTML = '<span class="d">' + fullDate(xs[i]) + "</span>" +
+                      opt.unit + fmt(ys[i], opt.digits);
+      tip.classList.add("on");
+
+      // 贴着边缘时把气泡拉回卡片内
+      var leftPx = px / W * box.width;
+      var half = tip.offsetWidth / 2;
+      tip.style.left = Math.max(half, Math.min(box.width - half, leftPx)) + "px";
+    }
+
+    function leave() {
+      cursor.setAttribute("opacity", "0");
+      tip.classList.remove("on");
+    }
+
+    svg.addEventListener("mousemove", move);
+    svg.addEventListener("mouseleave", leave);
+    svg.addEventListener("touchstart", move, { passive: true });
+    svg.addEventListener("touchmove", move, { passive: true });
+    svg.addEventListener("touchend", leave);
+  }
+
+  // ---------------------------------------------------------------
+  // 渲染一张卡片
+  // ---------------------------------------------------------------
+
+  function renderCard(cfg, data, extra) {
+    var el = document.getElementById("card-" + cfg.id);
+    var body = el.querySelector(".body");
+
+    if (data instanceof Error) {
+      body.innerHTML = '<div class="state error">取数失败：' + data.message + '</div>';
+      return;
+    }
+
+    var dir = data.change > 0.005 ? "up" : (data.change < -0.005 ? "down" : "flat");
+    var arrow = dir === "up" ? "▲" : (dir === "down" ? "▼" : "•");
+
+    var rows = data.series.slice().reverse().map(function (p) {
+      return "<tr><td>" + fullDate(p[0]) + "</td><td>" + cfg.unit + fmt(p[1], cfg.digits) + "</td></tr>";
+    }).join("");
+
+    var vals = data.series.map(function (p) { return p[1]; });
+    var hi = Math.max.apply(null, vals), lo = Math.min.apply(null, vals);
+
+    body.innerHTML =
+      '<div class="price">' +
+        '<span class="value">' + cfg.unit + fmt(data.last, cfg.digits) + '</span>' +
+        '<span class="chip ' + dir + '">' + arrow + " " + pct(data.change) +
+          ' <span style="opacity:.7">' + cfg.changeLabel + '</span></span>' +
+      '</div>' +
+      '<div class="aside">' + (extra || "") + '</div>' +
+      '<div class="hilo">' +
+        '<span>' + days + ' 天最高 <b>' + cfg.unit + fmt(hi, cfg.digits) + '</b></span>' +
+        '<span>最低 <b>' + cfg.unit + fmt(lo, cfg.digits) + '</b></span>' +
+      '</div>' +
+      '<div class="plot"></div>' +
+      '<details class="table"><summary>查看数据表（' + data.series.length + ' 个数据点）</summary>' +
+        '<div class="scroll"><table><thead><tr><th>时间</th><th>价格</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody></table></div></details>';
+
+    drawChart(body.querySelector(".plot"), data.series, {
+      color: cfg.color,
+      unit: cfg.unit,
+      digits: cfg.digits,
+      aria: cfg.title + "近 " + days + " 天走势"
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // 主流程
+  // ---------------------------------------------------------------
+
+  function buildShell() {
+    document.getElementById("cards").innerHTML = CARDS.map(function (c) {
+      return '<article class="card" id="card-' + c.id + '" style="--c:' + c.color + '">' +
+               '<header><span class="code">' + c.code + '</span>' +
+               '<span class="subtitle">' + c.title + '</span></header>' +
+               '<div class="body"><div class="state">加载中…</div></div>' +
+             '</article>';
+    }).join("");
+  }
+
+  function setStatus(text, cls) {
+    document.getElementById("updated").textContent = text;
+    document.getElementById("dot").className = "dot" + (cls ? " " + cls : "");
+  }
+
+  // 把三份数据画到页面上。values 里每一项是数据对象、Error，或 null（缺失）
+  function paint(values) {
+    var fx = values[0] instanceof Error ? null : values[0];
+
+    values.forEach(function (v, i) {
+      var cfg = CARDS[i];
+      if (!v) return;
+      if (v instanceof Error) { renderCard(cfg, v); return; }
+
+      // 副行：汇率卡显示反向汇率，币价卡换算成人民币
+      var extra = null;
+      if (i === 0) {
+        extra = "1 人民币 ≈ $" + fmt(1 / v.last, 4);
+      } else if (fx) {
+        extra = "≈ ¥" + fmt(v.last * fx.last, 0) + "（按 " + fmt(fx.last, 4) + " 折算）";
+      }
+      renderCard(cfg, v, extra);
+    });
+
+    setRate(fx ? fx.last : null);
+  }
+
+  // ---- 本地缓存：手机上重新打开先显示上次的数，不至于白屏 ----
+
+  var CACHE_KEY = "market-board-cache-v1";
+
+  function saveCache(values) {
+    try {
+      var keep = values.map(function (v) { return v instanceof Error ? null : v; });
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ days: days, at: Date.now(), values: keep }));
+    } catch (e) { /* 无痕模式等场景写不了，忽略 */ }
+  }
+
+  function loadCache() {
+    try {
+      var raw = localStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      var c = JSON.parse(raw);
+      return c && c.days === days && c.values ? c : null;
+    } catch (e) { return null; }
+  }
+
+  function hhmmss(ms) {
+    var d = new Date(ms);
+    return String(d.getHours()).padStart(2, "0") + ":" +
+           String(d.getMinutes()).padStart(2, "0") + ":" +
+           String(d.getSeconds()).padStart(2, "0");
+  }
+
+  function load() {
+    var mine = ++reqId;
+    var btn = document.getElementById("refresh");
+    btn.disabled = true;
+
+    // 先把缓存画出来（如果有），联网结果回来了再覆盖
+    var cached = loadCache();
+    if (cached) {
+      paint(cached.values);
+      setStatus("缓存 " + hhmmss(cached.at) + " · 更新中…", "stale");
+    } else {
+      setStatus("更新中…", "stale");
+    }
+
+    var spot = fetchSpot();
+
+    Promise.allSettled([
+      fetchFX(days),
+      fetchCoin("bitcoin", days, spot),
+      fetchCoin("ethereum", days, spot)
+    ]).then(function (res) {
+      if (mine !== reqId) return;   // 已经有更新的请求了，丢弃这次结果
+
+      var values = res.map(function (r) {
+        if (r.status === "fulfilled") return r.value;
+        return r.reason instanceof Error ? r.reason : new Error(String(r.reason));
+      });
+
+      var ok = values.filter(function (v) { return !(v instanceof Error); }).length;
+
+      // 这一轮某张卡失败时，如果缓存里有旧数据就留着旧的，别把画面打空
+      if (cached) {
+        values = values.map(function (v, i) {
+          return (v instanceof Error && cached.values[i]) ? cached.values[i] : v;
+        });
+      }
+
+      paint(values);
+      if (ok > 0) saveCache(values);
+
+      var stamp = hhmmss(Date.now());
+      if (ok === 0)      setStatus(cached ? "取数失败 · 显示缓存" : "全部取数失败", "err");
+      else if (ok < 3)   setStatus("部分失败 · " + stamp, "err");
+      else               setStatus("更新于 " + stamp, "");
+
+      btn.disabled = false;
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // 换汇小工具
+  // ---------------------------------------------------------------
+
+  var rate = null;
+  var lastEdited = "usd";            // 汇率刷新后按用户最后编辑的那一栏重算
+  var usdInput = document.getElementById("usd");
+  var cnyInput = document.getElementById("cny");
+
+  function setRate(r) {
+    rate = r;
+    if (rate) sync(lastEdited);
+  }
+
+  function sync(from) {
+    if (!rate) return;
+    lastEdited = from;
+    var src = from === "usd" ? usdInput : cnyInput;
+    var dst = from === "usd" ? cnyInput : usdInput;
+    var n = parseFloat(src.value);
+    if (!isFinite(n)) { dst.value = ""; return; }
+    var out = from === "usd" ? n * rate : n / rate;
+    // 去掉多余的尾零：1234.50 → 1234.5
+    dst.value = String(Math.round(out * 100) / 100);
+  }
+
+  usdInput.addEventListener("input", function () { sync("usd"); });
+  cnyInput.addEventListener("input", function () { sync("cny"); });
+
+  // ---- 事件绑定 ----
+
+  document.getElementById("refresh").addEventListener("click", load);
+
+  document.getElementById("ranges").addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button[data-days]");
+    if (!btn) return;
+    days = Number(btn.dataset.days);
+    Array.prototype.forEach.call(this.querySelectorAll("button"), function (b) {
+      b.setAttribute("aria-pressed", String(b === btn));
+    });
+    load();
+  });
+
+  // 标签页在后台时不刷新，省流量也省 API 配额
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      clearInterval(timer); timer = null;
+    } else if (!timer) {
+      load();
+      timer = setInterval(load, 60000);
+    }
+  });
+
+  buildShell();
+  load();
+  timer = setInterval(load, 60000);
+})();
+</script>
+
+</body>
+</html>
